@@ -47,10 +47,13 @@ set.seed(89788)
 scottree <- ctree(DV ~ Iv + Iv + IV, dat = datBigrf1, 
                   controls = ctree_control(mincriterion = 0.999, minbucket = 200, maxdepth = 4)) 
 
-#plot the outcome                                                                                     minbucket = 500, maxdepth = 4))
+#plot the outcome                                                                                    
 plot(scottree)
 
 ##to grow a random forest using ranger
+
+#set seed
+set.seed(89788)
 
 rf <- ranger(DV ~ IV + Iv + IV, data = datBigrf1, importance = "impurity")
 
