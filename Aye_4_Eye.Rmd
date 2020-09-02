@@ -5,7 +5,11 @@ date: "01/09/2020"
 output: pdf_document
 ---
 
-Here, thanks to Dr. Vica Papp is a script to downsample a historical linguistic dataset and grow a random forest on this data. For this example I am using a dataset of 18th century Scots and English words present in a corpus of texts produced by politically-active authors. There is far more English (92%) present in the dataset than Scots (8%). As it is the Scots I am interested in, a successful statistical analysis requires downsampling. 
+Here, thanks to Dr. Vica Papp is a script to downsample a historical linguistic dataset and grow a random forest on this data. 
+For this example I am using a subset of a dataset of 18th century Scots and English words, present in a corpus of texts. 
+I am interested in analysing only texts produced by politically-active authors, so the data is subset to include only those coded 'Pro' or 'Anti' (-Union). 
+There is far more English (92%) present in the dataset than Scots (8%). 
+As it is the Scots I am interested in, a successful statistical analysis requires downsampling. 
 
 ##Load required libraries and packages
 ```{r setup, include=FALSE}
@@ -31,7 +35,8 @@ set.seed(1234)
 
 ## Load and Clean
 
-Make sure dataset is filtered by desired predictor (in this case dataset only contains authors with known pro/anti-Union sentiments). Read in original dataset (datBigrf1), create a new copy containing only these authors (datBigrf2):
+Make sure dataset is filtered by desired predictor (in this case dataset only contains authors with known pro/anti-Union sentiments). 
+Read in original dataset (datBigrf1), create a new copy containing only these authors (datBigrf2):
 
 ```{r, eval = FALSE}
 datBigrf2 <- datBigrf1 %>%
@@ -39,7 +44,7 @@ datBigrf2 <- datBigrf1 %>%
 datBigrf2$Pro_or_Anti <- factor(datBigrf2$Pro_or_Anti)
 ```
 
-Select predictors to be included in analysis, treat Year of Birth as Numeric, the rest as Factor:
+Select predictors to be included in analysis, treat numeric variables (such as Year of Birth) as numeric, the rest as factor:
 
 ```{r load}
 sco <- read_csv("datBigrf2a.csv", col_names = TRUE)
@@ -48,7 +53,7 @@ sco <- sco %>%
   mutate_at(vars(2:9), funs(as.factor(.)))
 ```
 
-Check the imbalance in the df. In this case, about 92% is the majority class (English) and 8% is minority (Scots). So very imbalanced:
+Check the imbalance in the df. In this case, about 92% is the majority class (English) and 8% is minority (Scots). So very imbalanced.
 
 ```{r}
 tabyl(sco$Scots_English) %>% kable()
@@ -87,7 +92,9 @@ print(model_rf)
 
 ```
 
-A five-fold cross-validated forest on 200 trees, which took about 10 minutes to grow. The accuracy, unsurprisingly is about 92%, and Cohen's Kappa, which gives you the classification accuracy normalized by the imbalance of the two classes in the data, is not too shiny either.
+A five-fold cross-validated forest on 200 trees took about 10 minutes to grow on my outdated laptop - so large processing time.
+The accuracy, unsurprisingly is about 92%, and Cohen's Kappa, which gives you the classification accuracy normalized by the imbalance of the two classes in the data, 
+is not too shiny either.
 
 Let's pull out a confusion matrix:
 
@@ -106,7 +113,7 @@ To correct the imbalance issue, you have a few options here:
 
 - undersampling the majority class, so it wouldn't smother poor minority class: you might lose some explanatory power because the predictors are going to get weaker
 - oversampling / synthesizing more of the minority class: this however might make your df massive if you are dealing with lots of data. This is usually less of a problem with historical data, but it depends very much on the phenomenon under investigation. In this case we have lots of data, so it wouldn't be very suitable.
-- a hybrid of under and oversampling (with the ROSE or SMOTE algorithms): these are costly to compute so cache them if you run them
+- a hybrid of under and oversampling (with the ROSE or SMOTE algorithms): these are costly to compute so cache them if you run them. Given the high processing time we saw earlier, this option is not that desirable
 - stratifying the undersampling so the classifier can learn all (or at least more of) the predictor combinations. This is useful if you approach the data with hypotheses that need you to address each predictor)
 - decomposing your majority class into some smaller classes
 
