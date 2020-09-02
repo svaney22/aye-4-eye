@@ -1,0 +1,231 @@
+---
+title: "Subsampling to mitigate class imbalance in 18th century Scots dataset"
+author: "Vica Papp"
+date: "01/09/2020"
+output: pdf_document
+---
+
+Here, thanks to Dr. Vica Papp is a script to downsample a historical linguistic dataset and grow a random forest on this data. For this example I am using a dataset of 18th century Scots and English words present in a corpus of texts produced by politically-active authors. There is far more English (92%) present in the dataset than Scots (8%). As it is the Scots I am interested in, a successful statistical analysis requires downsampling. 
+
+##Load required libraries and packages
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(janitor)
+library(broom)
+library(party)
+library(ranger)
+library(ROSE)
+library(DMwR)
+library(broom)
+library(caret)
+library(randomForest)
+library(randomForestExplainer)
+#library(doParallel)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", out.width = "100%", warning = FALSE, message = FALSE, echo = TRUE, tidy = FALSE, size = "small")(echo = TRUE)
+
+``{r}
+set.seed(1234)
+```
+
+
+## Load and Clean
+
+Make sure dataset is filtered by desired predictor (in this case dataset only contains authors with known pro/anti-Union sentiments). Read in original dataset (datBigrf1), create a new copy containing only these authors (datBigrf2):
+
+```{r, eval = FALSE}
+datBigrf2 <- datBigrf1 %>%
+  filter(Pro_or_Anti == "Pro" | Pro_or_Anti == "Anti")
+datBigrf2$Pro_or_Anti <- factor(datBigrf2$Pro_or_Anti)
+```
+
+Select predictors to be included in analysis, treat Year of Birth as Numeric, the rest as Factor:
+
+```{r load}
+sco <- read_csv("datBigrf2a.csv", col_names = TRUE)
+sco <- sco %>% 
+  select(2:10) %>%
+  mutate_at(vars(2:9), funs(as.factor(.)))
+```
+
+Check the imbalance in the df. In this case, about 92% is the majority class (English) and 8% is minority (Scots). So very imbalanced:
+
+```{r}
+tabyl(sco$Scots_English) %>% kable()
+```
+
+If you fit a baseline model on it, it is likely to be about 92% accurate -- but only because it will likely always vote English. Let's check this:
+
+```{r, partition}
+
+index <- createDataPartition(sco$Scots_English, p = 0.7, list = FALSE)
+train_data <- sco[index, ]
+test_data  <- sco[-index, ]
+
+```
+
+# Baseline model
+
+```{r rf_base, cache=TRUE, message=FALSE}
+pt <- proc.time()
+grid <-  expand.grid(mtry = 3, splitrule = "gini", min.node.size = 10)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           #repeats = 5, 
+                           classProbs = TRUE,
+                           verboseIter = TRUE)
+
+model_rf <-  caret::train(Scots_English ~ ., 
+                          data = train_data, 
+                          method = "ranger", 
+                          num.trees = 200, 
+                          tuneGrid = grid, 
+                          trControl = fitControl)
+took <- proc.time() - pt
+took
+print(model_rf)
+
+```
+
+A five-fold cross-validated forest on 200 trees, which took about 10 minutes to grow. The accuracy, unsurprisingly is about 92%, and Cohen's Kappa, which gives you the classification accuracy normalized by the imbalance of the two classes in the data, is not too shiny either.
+
+Let's pull out a confusion matrix:
+
+```{r rf_base_cm, echo=FALSE, message=FALSE, cache=TRUE}
+pred <- predict(model_rf, newdata = test_data, type = "prob")
+final <- data.frame(actual = test_data$Scots_English, pred)
+
+final$predict <- as.factor(ifelse(final$English > 0.5, "English", "Scottish"))
+cm_original <- confusionMatrix(final$predict, test_data$Scots_English)
+cm_original
+```
+The confusion matrix confirms this bias towards the English words.
+
+
+To correct the imbalance issue, you have a few options here:
+
+- undersampling the majority class, so it wouldn't smother poor minority class: you might lose some explanatory power because the predictors are going to get weaker
+- oversampling / synthesizing more of the minority class: this however might make your df massive if you are dealing with lots of data. This is usually less of a problem with historical data, but it depends very much on the phenomenon under investigation. In this case we have lots of data, so it wouldn't be very suitable.
+- a hybrid of under and oversampling (with the ROSE or SMOTE algorithms): these are costly to compute so cache them if you run them
+- stratifying the undersampling so the classifier can learn all (or at least more of) the predictor combinations. This is useful if you approach the data with hypotheses that need you to address each predictor)
+- decomposing your majority class into some smaller classes
+
+You could toss a (five-sided) coin to choose an option, or try all of them and then make an informed decision based on your research needs.
+
+In this instance we are dealing with a lot of data (many thousands of lexical items) spread across a number of predictors that I do not want to explore individually, but in tandem. My majority class cannot be decomposed further, as 'English' words cannot be subdivided. ROSE or SMOTE could be an option, but given the size of the dataset I'm going to run a down/undersample here.
+
+##Undersampled dataset
+
+```{r, rf_under, cache=TRUE, message=FALSE}
+pt <- proc.time()
+grid <-  expand.grid(mtry = 3, splitrule = "gini", min.node.size = 10)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           #repeats = 5, 
+                           classProbs = TRUE,
+                           #verboseIter = TRUE,
+                           sampling = "down")
+
+model_rf_under <-  caret::train(Scots_English ~ ., 
+                          data = train_data, 
+                          method = "ranger", 
+                          num.trees = 200, 
+                          tuneGrid = grid, 
+                          trControl = fitControl)
+took <- proc.time() - pt
+took
+print(model_rf_under)
+
+pred_under <- predict(model_rf_under, newdata = test_data, type = "prob")
+final_under <- data.frame(actual = test_data$Scots_English, pred_under)
+final_under$predict <- as.factor(ifelse(final_under$English > 0.5, "English", "Scottish"))
+cm_under <- confusionMatrix(final_under$predict, test_data$Scots_English)
+cm_under
+
+```
+
+
+## comparing confusion matrix of original and undersampling
+```{r, echo=FALSE, message=FALSE}
+cm_original$table  %>%  kable(caption = "Original")
+
+```
+
+```{r, echo=FALSE, message=FALSE}
+cm_under$table %>%  kable(caption = "Under")
+
+```
+
+We see a marked improvement in the confusion matrix now that the dataset has been downsampled. It's still not great (the Concordance Index is 0.78, originally 0.92), but at least the model is now largely predicting our minority class (Scots) rather than the majority class (English).
+
+The next step is to grow a random forest from the downsampled dataset
+
+##Fitting a downsampled forest in randomForest
+
+```{r rf_in_rF, cache=TRUE, echo=FALSE, message=FALSE}
+set.seed(2018)
+index <- createDataPartition(sco$Scots_English, p = 0.7, list = FALSE)
+train_data <- sco[index, ]
+test_data  <- sco[-index, ]
+
+rareclass <- train_data %>% 
+  filter(Scots_English == "Scottish") %>% 
+  nrow()
+
+under_detail <- randomForest(Scots_English ~ ., 
+                          data = train_data, 
+                          ntree = 500, 
+                          mtry = 3,
+                          nodesize = 10,
+                          importance = TRUE,
+                          strata = train_data$Scots_English,
+                          sampsize = c(rareclass, rareclass))
+# https://stats.stackexchange.com/questions/168415/random-forest-in-r-using-unbalanced-data
+
+plot(under_detail)
+
+pred_under_detail <- predict(under_detail, newdata = test_data, type = "prob")
+final_under_detail <- data.frame(actual = test_data$Scots_English, pred_under_detail)
+final_under_detail$predict <- as.factor(ifelse(final_under_detail$English > 0.5, "English", "Scottish"))
+cm_under_detail <- confusionMatrix(final_under_detail$predict, test_data$Scots_English)
+cm_under_detail
+
+```
+
+And now we plot the results, to give us the output of the random forest
+
+#plot forest
+```{r vi, eval=FALSE, include=FALSE, cache=TRUE}
+vi_under_detail <- under_detail$importance %>%
+  tidy() %>%
+  select(1,5) %>% 
+  arrange(desc(MeanDecreaseGini))
+
+vi_under_detail$`.rownames` <- factor(vi_under_detail$`.rownames`, levels = vi_under_detail$`.rownames`)
+
+vi_under_detail %>%
+  ggplot(aes(x = `.rownames`, weight = MeanDecreaseGini, fill = `.rownames`)) +
+  geom_bar() +
+  coord_flip() +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(title = "Variable importance predicting Scots", subtitle = "Only authors with known anti/pro sentiment", y = "Mean Gini Decrease", x = "variable")
+
+```
+
+
+
+Sources:
+
+- https://topepo.github.io/caret/subsampling-for-class-imbalances.html
+- plotting: https://www.r-bloggers.com/handling-class-imbalance-with-r-and-caret-caveats-when-using-the-auc/
+- plotting: https://stackoverflow.com/questions/31138751/roc-curve-from-training-data-in-caret
+- https://stat.ethz.ch/pipermail/r-help/2005-October/081557.html
+- https://github.com/h2oai/h2o-tutorials/blob/master/tutorials/gbm-randomforest/GBM_RandomForest_Example.R
+- http://docs.h2o.ai/h2o/latest-stable/h2o-r/docs/reference/h2o.randomForest.html
+- http://uc-r.github.io/dalex
+- https://github.com/pbiecek/DALEX
+- https://rawgit.com/agosiewska/DALEX_docs/master/vignettes/DALEX_h2o.html
+- http://www.svds.com/learning-imbalanced-classes/
+- https://cran.r-project.org/web/packages/unbalanced/unbalanced.pdf
+- 
